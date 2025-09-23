@@ -1,0 +1,14 @@
+{
+  "ModeName": {
+    "stagger_ms": 1200,
+    "items": [
+      { "type": "url", "target": "https://..." },
+      { "type": "file", "target": "C:\\Path\\Doc.docx" },
+      { "type": "app", "target": "C:\\Path\\App.exe" }
+    ]
+  },
+  "_settings": {
+    "hotkeys_enabled": true,
+    "default_stagger_ms": 1200
+  }
+}
