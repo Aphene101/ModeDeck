@@ -1,1 +1,1 @@
-﻿[{"items":[{"target":"website","type":"url"}],"name":"Name1"}]
+﻿[{"items":[{"target":"website1","type":"url"},{"target":"file1","type":"file"},{"target":"app1","type":"app"}],"name":"Name2"}]

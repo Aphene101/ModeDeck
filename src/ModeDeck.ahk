@@ -7,6 +7,8 @@ global H := 600
 global configPath := A_ScriptDir "\..\states.json"
 global gModes := []
 global maingui
+global gCreateDlg := 0
+global gEditDlgs := Map()
 
 LoadModes()
 
@@ -53,10 +55,11 @@ AddModeRow(gui, mode, y, W, idx) {
         mode.name
     )
 
-    gui.AddText(
+    menuCtl := gui.AddText(
         "x" (W - rightPad - menuW) " y" top " w" menuW " h" menuH " Center BackgroundTrans +0x100",
         "⋮"
     )
+    menuCtl.OnEvent("Click", (*) => ShowModeMenu(idx))
 
     gui.AddText("x" x " y" (y + rowH) " w" (W - x * 2) " h1 Background0x434343", "")
 
@@ -75,11 +78,21 @@ AddCreateRow(gui, y, W) {
     plus := gui.AddText("x" (x + inner) " y" top " w28" " h" plusH " Center BackgroundTrans +0x100",
     "+")
 
-    plus.OnEvent("Click", CreateModePrompt)
+    plus.OnEvent("Click", ShowCreateModePrompt)
 
     gui.AddText("x" x " y" (y + rowH) " w" (W - x * 2) " h1 Background0x434343", "")
 
     return y + rowH + 1
+}
+
+ShowCreateModePrompt(*) {
+    global gCreateDlg
+    if (gCreateDlg && WinExist("ahk_id " gCreateDlg.Hwnd)) {
+        gCreateDlg.Show("Center")
+        WinActivate("ahk_id " gCreateDlg.Hwnd)
+        return
+    }
+    gCreateDlg := CreateModePrompt()
 }
 
 CreateModePrompt(*) {
@@ -123,6 +136,7 @@ CreateModePrompt(*) {
         SaveNewMode(nameInput.Text, tmpItems, newmode)
     ))
     newmode.Show("w" (newmodeW) "h" (newmodeH) "Center")
+    return newmode
 }
 
 PromptAddItem(itemsList, tmpItems, kind) {
@@ -192,6 +206,157 @@ GetKeyCI(obj, keys) {
     return ""
 }
 
+ShowModeMenu(idx) {
+    global gModes
+    m := Menu()
+    m.Add("Rename", (*) => RenameMode(idx))
+    m.Add("Edit", (*) => EditMode(idx))
+    m.Add()
+    m.Add("Duplicate", (*) => DuplicateMode(idx))
+    m.Add("Move Up", (*) => MoveMode(idx, -1))
+    m.Add("Move Down", (*) => MoveMode(idx, +1))
+    m.Add()
+    m.Add("Delete", (*) => DeleteMode(idx))
+    m.Show()
+}
+
+RenameMode(idx) {
+    global gModes
+    cur := gModes[idx].name
+    res := InputBox("Enter a new name for this mode:", "Rename Mode", "", cur)
+    if (res.Result = "OK") {
+        newName := Trim(res.Value)
+        if (newName != "") {
+            gModes[idx].name := newName
+            SaveModes()
+            RefreshModes()
+        }
+    }
+}
+
+EditMode(idx) {
+    global gModes, gEditDlgs
+    if (gEditDlgs.Has(idx)) {
+        dlg := gEditDlgs[idx]
+        if (dlg && WinExist("ahk_id " dlg.Hwnd)) {
+            dlg.Show("Center"), WinActivate("ahk_id " dlg.Hwnd)
+            return
+        } else {
+            gEditDlgs.Delete(idx)
+        }
+    }
+    mode := gModes[idx]
+    gEditDlgs[idx] := EditModeDialog(idx, mode.name, mode.items)
+}
+
+EditModeDialog(idx, nameInit, itemsInit) {
+    global gEditDlgs
+    newmodeW := 480, newmodeH := 550
+    rowY := 128 + 180 + 55
+    btnW := 110, gap := 20
+    totalW := btnW * 2 + gap
+    startX := (newmodeW - totalW) / 2
+
+    tmpItems := DeepClone(itemsInit)
+
+    dlg := Gui(, "Edit Mode")
+    dlg.OnEvent("Close", (*) => gEditDlgs.Delete(idx))
+
+    dlg.BackColor := "0x262626"
+    dlg.SetFont("s25 cc0c0c0", "Segoe UI")
+    dlg.AddText("x20 y16 w" (newmodeW - 40) " h50 BackgroundTrans Center", "Edit Mode")
+
+    dlg.SetFont("s14 cc0c0c0", "Segoe UI")
+    dlg.AddText("x20 y80 w120 h24 BackgroundTrans", " Mode Name: ")
+    dlg.SetFont("s14 c0x262626", "Segoe UI")
+    nameInput := dlg.AddEdit("x20 y110 w" (newmodeW - 40) " h28", nameInit)
+
+    dlg.SetFont("s14 cc0c0c0", "Segoe UI")
+    dlg.AddText("x20 y150 w200 h24", "Items:")
+    itemsList := dlg.AddListBox("x20 y178 w" (newmodeW - 40) " h180 Background0x333333 c0xDDDDDD")
+
+    ; preload items
+    for _, it in tmpItems {
+        if !IsObject(it) {
+            s := it
+            t := RegExMatch(s, "i)^(https?://)") ? "url" : "file"
+            lab := (t = "url") ? " • Website: " : (t = "file") ? " • File: " : " • Item: "
+            itemsList.Add([lab s])
+            continue
+        }
+        t := StrLower(GetKeyCI(it, ["type"]))
+        target := GetKeyCI(it, ["target", "path", "value"])
+        lab := (t = "url") ? " • Website: " : (t = "file") ? " • File: " : (t = "app") ? " • App: " : " • Item: "
+        itemsList.Add([lab target])
+    }
+
+    btnWeb := dlg.AddButton("x" (startX - 95) " y" (178 + 180 + 12) " w" btnW " h30", "Website")
+    btnFile := dlg.AddButton("x" (startX + btnW + 50 - 100) " y" (178 + 180 + 12) " w" btnW " h30", "File")
+    btnApp := dlg.AddButton("x" (startX + (btnW + 50) * 2 - 100) " y" (178 + 180 + 12) " w" btnW " h30", "App")
+    btnWeb.OnEvent("Click", (*) => PromptAddItem(itemsList, tmpItems, "url"))
+    btnFile.OnEvent("Click", (*) => PromptAddItem(itemsList, tmpItems, "file"))
+    btnApp.OnEvent("Click", (*) => PromptAddItem(itemsList, tmpItems, "app"))
+
+    removeBtn := dlg.AddButton("x150 y" rowY + 55 " w170 h30", "Remove Selected")
+    removeBtn.OnEvent("Click", (*) => RemoveSelectedHandler(itemsList, tmpItems))
+
+    saveBtn := dlg.AddButton("x" startX " y" (newmodeH - 56) " w" btnW " h30", "Save")
+    cancelBtn := dlg.AddButton("x" (startX + btnW + gap) " y" (newmodeH - 56) " w" btnW " h30", "Cancel")
+    cancelBtn.OnEvent("Click", (*) => (dlg.Destroy(), gEditDlgs.Delete(idx)))
+    saveBtn.OnEvent("Click", (*) => EditModeSave(idx, nameInput.Text, tmpItems, dlg))
+
+    dlg.Show("w" (newmodeW) "h" (newmodeH) "Center")
+    return dlg
+}
+
+EditModeSave(idx, name, items, dlg) {
+    global gModes, gEditDlgs
+    if (Trim(name) = "") {
+        MsgBox("Mode name cannot be empty")
+        return
+    }
+    if (items.Length = 0) {
+        MsgBox("Add at least one item")
+        return
+    }
+    gModes[idx].name := name
+    gModes[idx].items := items
+    SaveModes()
+    dlg.Destroy()
+    gEditDlgs.Delete(idx)
+    RefreshModes()
+}
+
+DuplicateMode(idx) {
+    global gModes
+    clone := DeepClone(gModes[idx])
+    clone.name := (clone.HasProp("name") ? clone["name"] : "Untitled") " (Copy)"
+    gModes.Push(clone)
+    SaveModes()
+    RefreshModes()
+}
+
+MoveMode(idx, delta) {
+    global gModes
+    to := idx + delta
+    if (to < 1 || to > gModes.Length)
+        return
+    tmp := gModes[idx]
+    gModes[idx] := gModes[to]
+    gModes[to] := tmp
+    SaveModes()
+    RefreshModes()
+}
+
+DeleteMode(idx) {
+    global gModes
+    if (MsgBox("Delete this mode?", "Confirm Delete", "YesNo Icon!") = "Yes") {
+        gModes.RemoveAt(idx)
+        SaveModes()
+        RefreshModes()
+    }
+}
+
 LoadModes() {
     global gModes, configPath
 
@@ -202,7 +367,6 @@ LoadModes() {
 
     try {
         txt := FileRead(configPath, "UTF-8")
-        ; ToolTip("len=" StrLen(txt)), SetTimer(() => ToolTip(), -1200)
         if (SubStr(txt, 1, 1) = Chr(0xFEFF)) {
             txt := SubStr(txt, 2)
         }
@@ -216,19 +380,19 @@ LoadModes() {
                 modes := data
                 ok := true
             }
+        } catch {
+
         }
 
         if (!ok && IsObject(data)) {
-            if data.Has("modes") && IsObject(data.modes) {
+            if (data.HasProp("modes") && IsObject(data.modes)) {
                 modes := data.modes
                 ok := true
-            } else if data.Has("states") && IsObject(data.states) {
+            } else if (data.HasProp("states") && IsObject(data.states)) {
                 modes := data.states
                 ok := true
             }
         }
-
-        ; ToolTip("foundModes=" (ok ? (IsObject(modes) ? modes.Length : 0) : "no")), SetTimer(() => ToolTip(), -1200)
 
         gModes := []
         if (ok && IsObject(modes)) {
@@ -250,6 +414,13 @@ LoadModes() {
         gModes := []
     }
     ToolTip("afterLoad gModes=" gModes.Length), SetTimer(() => ToolTip(), -1500)
+}
+
+DeepClone(v) {
+    try
+        return JSON.Load(JSON.Dump(v))
+    catch
+        return v
 }
 
 RefreshModes() {
