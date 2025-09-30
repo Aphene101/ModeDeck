@@ -176,12 +176,25 @@ RemoveSelectedHandler(itemsList, tmpItems) {
 }
 
 SaveNewMode(name, items, newmode) {
-    if (name = "") {
+    if (Trim(name) = "") {
         MsgBox("Mode name cannot be empty")
         return
     }
     if (items.Length = 0) {
         MsgBox("Add at least one item")
+        return
+    }
+
+    items := NormalizeItems(items)
+    mode := { name: name, items: items }
+    result := ValidateMode(mode)
+    if !result["ok"] {
+        msg := "Some items couldn’t be opened. Please fix them:`n`n"
+        for err in result["errors"] {
+            idx := (err["index"] > 0) ? "#" err["index"] " " : ""
+            msg .= "• " idx "[" err["item"] "] — " err["message"] "`n"
+        }
+        MsgBox(msg, "Validation failed", 0x10)
         return
     }
 
@@ -236,7 +249,7 @@ RenameMode(idx) {
 
 EditMode(idx) {
     global gModes, gEditDlgs
-    if (gEditDlgs.Has(idx)) {
+    if (gEditDlgs.HasProp(idx)) {
         dlg := gEditDlgs[idx]
         if (dlg && WinExist("ahk_id " dlg.Hwnd)) {
             dlg.Show("Center"), WinActivate("ahk_id " dlg.Hwnd)
@@ -302,7 +315,7 @@ EditModeDialog(idx, nameInit, itemsInit) {
 
     saveBtn := dlg.AddButton("x" startX " y" (newmodeH - 56) " w" btnW " h30", "Save")
     cancelBtn := dlg.AddButton("x" (startX + btnW + gap) " y" (newmodeH - 56) " w" btnW " h30", "Cancel")
-    cancelBtn.OnEvent("Click", (*) => (dlg.Destroy(), gEditDlgs.Delete(idx)))
+    cancelBtn.OnEvent("Click", (*) => (dlg.Destroy()))
     saveBtn.OnEvent("Click", (*) => EditModeSave(idx, nameInput.Text, tmpItems, dlg))
 
     dlg.Show("w" (newmodeW) "h" (newmodeH) "Center")
@@ -319,6 +332,20 @@ EditModeSave(idx, name, items, dlg) {
         MsgBox("Add at least one item")
         return
     }
+
+    items := NormalizeItems(items)
+    mode := { name: name, items: items }
+    result := ValidateMode(mode)
+    if !result["ok"] {
+        msg := "Some items couldn’t be opened. Please fix them:`n`n"
+        for err in result["errors"] {
+            idx := (err["index"] > 0) ? "#" err["index"] " " : ""
+            msg .= "• " idx "[" err["item"] "] — " err["message"] "`n"
+        }
+        MsgBox(msg, "Validation failed", 0x10)
+        return
+    }
+
     gModes[idx].name := name
     gModes[idx].items := items
     SaveModes()
@@ -355,6 +382,318 @@ DeleteMode(idx) {
         SaveModes()
         RefreshModes()
     }
+}
+
+; ---------- VALIDATION HELPERS ----------
+IsProbablyUrl(url) {
+    ; Accepts http(s) + optional query/fragment; simple, fast sanity check
+    return RegExMatch(url, "i)^(https?://)[^\s/$.?#].[^\s]*$")
+}
+
+HttpReachable(url, timeoutMs := 2500) {
+    ; Tries HEAD; if blocked, falls back to a tiny GET (range 0-0).
+    ; Returns { ok: true/false, status: N, reason: "..." }
+    try {
+        req := ComObject("WinHttp.WinHttpRequest.5.1")
+        req.SetTimeouts(timeoutMs, timeoutMs, timeoutMs, timeoutMs)
+        req.Open("HEAD", url, false)
+        req.SetRequestHeader("User-Agent", "ModeDeck/1.0 (AHK v2)")
+        try {
+            req.Send()
+        } catch {
+            req := ComObject("WinHttp.WinHttpRequest.5.1")
+            req.SetTimeouts(timeoutMs, timeoutMs, timeoutMs, timeoutMs)
+            req.Open("GET", url, false)
+            req.SetRequestHeader("Range", "bytes=0-0")
+            req.SetRequestHeader("User-Agent", "ModeDeck/1.0 (AHK v2)")
+            req.Send()
+        }
+        status := req.Status
+        return Map("ok", (status >= 200 && status < 400), "status", status, "reason", req.StatusText)
+    } catch as e {
+        return Map("ok", false, "status", 0, "reason", e.Message)
+    }
+}
+
+FileOrDirExists(p) {
+    s := p . ""
+    s := Trim(s)
+    if (s = "")
+        return false
+
+    if RegExMatch(s, "i)^https?://")
+        return false
+
+    try_fe := FileExist(s)
+    if (try_fe != "")
+        return true
+
+    try {
+        f := FileOpen(s, "r")
+        if IsObject(f) {
+            f.Close()
+            return true
+        }
+    } catch {
+
+    }
+
+    alt := RegExReplace(s, "^file:///*", "")
+    alt := StrReplace(alt, "/", "\")
+    if (alt != s) {
+        if (FileExist(alt) != "")
+            return true
+        try {
+            f2 := FileOpen(alt, "r")
+            if IsObject(f2) {
+                f2.Close()
+                return true
+            }
+        } catch {
+        }
+    }
+
+    long := "\\?\" s
+    try_long := FileExist(long)
+    if (try_long != "")
+        return true
+    try {
+        f3 := FileOpen(long, "r")
+        if IsObject(f3) {
+            f3.Close()
+            return true
+        }
+    } catch {
+
+    }
+
+    return false
+}
+
+FindOnPath(name) {
+    if InStr(name, "\") || InStr(name, "/") || RegExMatch(name, "i)^\w:\\") {
+        return FileOrDirExists(name) ? name : ""
+    }
+
+    pathext := EnvGet("PATHEXT")
+    if !pathext
+        pathext := ".COM;.EXE;.BAT;.CMD"
+    exts := StrSplit(pathext, ";")
+
+    pathvar := EnvGet("PATH")
+    if !pathvar
+        pathvar := ""
+    paths := StrSplit(pathvar, ";")
+
+    for p in paths {
+        if !p
+            continue
+        for ext in exts {
+            test := RTrim(p, "\/") "\" name (ext ? ext : "")
+            if FileOrDirExists(test)
+                return test
+        }
+
+        test := RTrim(p, "\/") "\" name
+        if FileOrDirExists(test)
+            return test
+    }
+    return ""
+}
+
+CleanPath(s) {
+    if s = ""
+        return ""
+    str := s . ""
+    str := Trim(str)
+
+    if (SubStr(str, 1, 1) = '"' && SubStr(str, 0) = '"')
+        str := SubStr(str, 2, StrLen(str) - 2)
+
+    str := RegExReplace(str, "i)^\s*file:///*", "")
+
+    if !RegExMatch(str, "i)^https?://")
+        str := StrReplace(str, "/", "\")
+
+    str := Trim(str)
+    return str
+}
+
+NormalizeItems(items) {
+    out := []
+    for _, it in items {
+        if IsObject(it) && Type(it) = "Map" {
+            m := Map()
+            if it.Has("type")
+                m["type"] := StrLower(it["type"])
+            if it.Has("target")
+                m["target"] := CleanPath(it["target"])
+
+            for k, v in it {
+                lk := StrLower(k)
+                if !m.Has("target") && (lk = "target" || lk = "path" || lk = "value" || lk = "url")
+                    m["target"] := CleanPath(v)
+            }
+
+            if !m.Has("type") && m.Has("target")
+                m["type"] := RegExMatch(m["target"], "i)^https?://") ? "url" : "file"
+
+            out.Push(m)
+            continue
+        }
+
+        if IsObject(it) {
+            m := Map()
+            try {
+                if it.HasProp("type")
+                    m["type"] := StrLower(it.type)
+                if it.HasProp("target")
+                    m["target"] := CleanPath(it.target)
+            } catch {
+            }
+            try {
+                for k, v in it {
+                    lk := StrLower(k)
+                    if !m.Has("target") && (lk = "target" || lk = "path" || lk = "value" || lk = "url")
+                        m["target"] := CleanPath(v)
+                    if !m.Has("type") && lk = "type"
+                        m["type"] := StrLower(v)
+                }
+            } catch {
+
+            }
+
+            if !m.Has("target")
+                m["target"] := CleanPath(ItemToString(it))
+            if !m.Has("type")
+                m["type"] := RegExMatch(m["target"], "i)^https?://") ? "url" : "file"
+            out.Push(m)
+            continue
+        }
+
+        s := ItemToString(it)
+        t := RegExMatch(s, "i)^https?://") ? "url" : "file"
+        out.Push({ type: t, target: CleanPath(s) })
+    }
+    return out
+}
+
+ItemToString(x) {
+    if x = ""
+        return ""
+    if IsObject(x) {
+        try {
+            return JSON.Dump(x)
+        } catch as e {
+            return ""
+        }
+    }
+    return x . ""
+}
+
+CanOpenItem(item) {
+    t := ""
+    val := ""
+
+    if IsObject(item) {
+        typeName := Type(item)
+
+        if (typeName = "Map") {
+            if item.Has("type")
+                t := StrLower(item["type"])
+            if item.Has("target")
+                val := item["target"]
+
+            for k, v in item {
+                lk := StrLower(k)
+                if (lk = "path" || lk = "value" || lk = "url")
+                    val := v
+            }
+
+        } else {
+            if item.HasProp("type")
+                t := StrLower(item.type)
+            if item.HasProp("target")
+                val := item.target
+
+            try {
+                for k, v in item {
+                    lk := StrLower(k)
+                    if (lk = "path" || lk = "value" || lk = "url")
+                        val := v
+                }
+            } catch {
+                s := ItemToString(item)
+                if (s != "") {
+                    t := RegExMatch(s, "i)^https?://") ? "url" : "file"
+                    val := s
+                }
+            }
+        }
+    } else {
+        val := item . ""
+        t := RegExMatch(val, "i)^https?://") ? "url" : "file"
+    }
+
+    if (t = "")
+        return Map("ok", false, "err", "Missing 'type' (url/file/app).")
+    if (val = "")
+        return Map("ok", false, "err", "Missing value/path/URL (target).")
+
+    switch t {
+        case "website", "url":
+            if !IsProbablyUrl(val)
+                return Map("ok", false, "err", "Invalid URL format.")
+            return Map("ok", true)
+
+        case "file":
+            if !FileOrDirExists(val)
+                return Map("ok", false, "err", "File or folder not found.")
+            return Map("ok", true)
+
+        case "app":
+            full := FindOnPath(val)
+            if !full
+                return Map("ok", false, "err", "App not found on PATH or invalid path.")
+            if !RegExMatch(StrLower(full), "\.(exe|com|bat|cmd)$")
+                return Map("ok", false, "err", "Resolved app is not an executable: " full)
+            return Map("ok", true)
+
+        default:
+            return Map("ok", false, "err", "Unknown type: " t)
+    }
+}
+
+ValidateMode(mode) {
+    errs := []
+    if !mode || !mode.HasProp("items") || Type(mode.items) != "Array" || mode.items.Length = 0
+        errs.Push(Map("index", -1, "item", "", "message", "No items in this mode."))
+
+    if mode && mode.HasProp("items") {
+        for i, it in mode.items {
+            res := CanOpenItem(it)
+            if !res["ok"] {
+                label := ""
+                if IsObject(it) {
+                    try {
+                        for k, v in it {
+                            if (StrLower(k) ~= "^(target|value|path|url|name)$") {
+                                label := v
+                                break
+                            }
+                        }
+                    }
+                } else {
+                    label := it . ""
+                }
+
+                if !label
+                    label := "(item #" i ")"
+                errs.Push(Map("index", i, "item", label, "message", res["err"]))
+            }
+        }
+    }
+    return errs.Length ? Map("ok", false, "errors", errs) : Map("ok", true, "errors", [])
 }
 
 LoadModes() {
