@@ -7,7 +7,7 @@ global H := 600
 global configPath := A_ScriptDir "\..\states.json"
 global gModes := []
 global maingui
-global gCreateDlg := 0
+global gCreateDlg := ""
 global gEditDlgs := Map()
 
 LoadModes()
@@ -87,7 +87,7 @@ AddCreateRow(gui, y, W) {
 
 ShowCreateModePrompt(*) {
     global gCreateDlg
-    if (gCreateDlg && WinExist("ahk_id " gCreateDlg.Hwnd)) {
+    if (gCreateDlg != "" && WinExist("ahk_id " gCreateDlg.Hwnd)) {
         gCreateDlg.Show("Center")
         WinActivate("ahk_id " gCreateDlg.Hwnd)
         return
