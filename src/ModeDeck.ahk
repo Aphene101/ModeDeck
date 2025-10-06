@@ -9,6 +9,20 @@ global gModes := []
 global maingui
 global gCreateDlg := ""
 global gEditDlgs := Map()
+global gModePIDs := Map()
+global gLastMode := 0
+global profileStateFile := A_ScriptDir "\profiles.json"
+global gProfileInitialized := Map()
+
+if FileExist(profileStateFile) {
+    try {
+        gProfileInitialized := JSON.Load(FileRead(profileStateFile))
+    } catch {
+        gProfileInitialized := Map()
+    }
+} else {
+    gProfileInitialized := Map()
+}
 
 LoadModes()
 
@@ -54,6 +68,7 @@ AddModeRow(gui, mode, y, W, idx) {
         "x" (x + inner) " y" top " w" (W - (x + inner) - rightPad - menuW) " h" (menuH) " BackgroundTrans 0x200 +0x100",
         mode.name
     )
+    nameCtl.OnEvent("Click", (*) => LaunchMode(idx))
 
     menuCtl := gui.AddText(
         "x" (W - rightPad - menuW) " y" top " w" menuW " h" menuH " Center BackgroundTrans +0x100",
@@ -188,6 +203,7 @@ SaveNewMode(name, items, newmode) {
     items := NormalizeItems(items)
     mode := { name: name, items: items }
     result := ValidateMode(mode)
+
     if !result["ok"] {
         msg := "Some items couldn’t be opened. Please fix them:`n`n"
         for err in result["errors"] {
@@ -206,7 +222,7 @@ SaveNewMode(name, items, newmode) {
 
 SaveModes() {
     global configPath
-    FileDelete(configPath)
+    try FileDelete(configPath)
     FileAppend(JSON.Dump(gModes), configPath, "UTF-8")
 }
 
@@ -384,17 +400,14 @@ DeleteMode(idx) {
     }
 }
 
-; ---------- VALIDATION HELPERS ----------
 IsProbablyUrl(url) {
-    ; Accepts http(s) + optional query/fragment; simple, fast sanity check
     return RegExMatch(url, "i)^(https?://)[^\s/$.?#].[^\s]*$")
 }
 
 HttpReachable(url, timeoutMs := 2500) {
-    ; Tries HEAD; if blocked, falls back to a tiny GET (range 0-0).
-    ; Returns { ok: true/false, status: N, reason: "..." }
     try {
         req := ComObject("WinHttp.WinHttpRequest.5.1")
+        req.Option[4] := 0x00002000   ; <<< NEW: suppress cert / error dialogs
         req.SetTimeouts(timeoutMs, timeoutMs, timeoutMs, timeoutMs)
         req.Open("HEAD", url, false)
         req.SetRequestHeader("User-Agent", "ModeDeck/1.0 (AHK v2)")
@@ -402,6 +415,7 @@ HttpReachable(url, timeoutMs := 2500) {
             req.Send()
         } catch {
             req := ComObject("WinHttp.WinHttpRequest.5.1")
+            req.Option[4] := 0x00002000   ; <<< same flag for fallback request
             req.SetTimeouts(timeoutMs, timeoutMs, timeoutMs, timeoutMs)
             req.Open("GET", url, false)
             req.SetRequestHeader("Range", "bytes=0-0")
@@ -505,6 +519,11 @@ CleanPath(s) {
     if s = ""
         return ""
     str := s . ""
+
+    str := StrReplace(str, "%20", " ")
+    str := StrReplace(str, "%22", "" "")
+    str := StrReplace(str, "%28", "(")
+    str := StrReplace(str, "%29", ")")
     str := Trim(str)
 
     if (SubStr(str, 1, 1) = '"' && SubStr(str, 0) = '"')
@@ -694,6 +713,223 @@ ValidateMode(mode) {
         }
     }
     return errs.Length ? Map("ok", false, "errors", errs) : Map("ok", true, "errors", [])
+}
+
+LaunchMode(idx) {
+    global gModes, gModePIDs, gLastMode, profileStateFile, gProfileInitialized
+
+    mode := gModes[idx]
+    if !mode || !mode.HasProp("items") {
+        MsgBox("Invalid mode.", "Error", 0x10)
+        return
+    }
+
+    result := ValidateMode(mode)
+    if !result["ok"] {
+        MsgBox("Mode contains invalid items. Please fix them first.", "Cannot Launch", 0x10)
+        return
+    }
+
+    ; --- Kill previous mode safely ---
+    if (gLastMode && gModePIDs.Has(gLastMode)) {
+        for proc in gModePIDs[gLastMode].pids {
+            pid := proc.pid
+            try RunWait('taskkill /PID ' pid ' /T /F', , 'Hide')
+        }
+
+        for hwnd in gModePIDs[gLastMode].windows {
+            try if WinExist("ahk_id " hwnd)
+                WinClose("ahk_id " hwnd)
+        }
+
+        gModePIDs.Delete(gLastMode)
+    }
+
+    newPids := []
+    newWindows := []
+    urlsAndPdfs := []
+    otherItems := []
+
+    for _, item in mode.items {
+        t := StrLower(item["type"])
+        target := item["target"]
+        if (t = "url" || (t = "file" && RegExMatch(target, "\.pdf$"))) {
+            urlsAndPdfs.Push({ target: target, type: t })
+        } else {
+            otherItems.Push({ target: target, type: t })
+        }
+    }
+
+    tmpProf := ""
+    ; --- Launch URLs and PDFs ---
+    if (urlsAndPdfs.Length > 0) {
+        exe := GetDefaultBrowserExe()
+        profName := RegExReplace(mode.name, "[^\w\s-]", "_")
+        tmpProf := A_ScriptDir "\profiles\" profName
+        DirCreate(tmpProf)
+
+        ; Mark profile as initialized once
+        if !gProfileInitialized.Has(profName) {
+            gProfileInitialized[profName] := true
+            if FileExist(profileStateFile)
+                FileDelete(profileStateFile)
+            FileAppend(JSON.Dump(gProfileInitialized), profileStateFile, "UTF-8")
+        }
+
+        ; Check if profile already has a running window
+        existingPid := ""
+        for _, proc in gModePIDs {
+            if proc.HasKey("profile") && proc.profile = tmpProf {
+                if proc.pids.Length() > 0
+                    existingPid := proc.pids[1].pid
+                break
+            }
+        }
+
+        ; Build command
+        cmd := '"' exe '" --user-data-dir="' tmpProf '" --no-first-run --no-default-browser-check --disable-session-crashed-bubble --restore-last-session=false --allow-pre-commit-input --enable-features=PasswordImport'
+        for _, u in urlsAndPdfs
+            cmd .= ' "' u.target '"'
+
+        if existingPid {
+            ; If profile is already running, just run the URLs (will open in existing window)
+            Run cmd, , , &pid
+        } else {
+            ; Start new window
+            cmd .= " --new-window"
+            Run cmd, , , &pid
+        }
+
+        newPids.Push({ pid: pid, exe: exe })
+
+        if WinWaitActive("ahk_pid " pid, , 10) {
+            h := WinExist("ahk_pid " pid)
+            if (h) {
+                WinMaximize("ahk_id " h)
+                newWindows.Push(h)
+            }
+        }
+    }
+
+    ; Launch other items (files/apps)
+    for _, it in otherItems {
+        target := it.target
+        t := it.type
+        try {
+            if (t = "file" || t = "app") {
+                before := WinGetList()
+                Run '"' target '"', , , &pid
+                newPids.Push({ pid: pid, exe: target })
+
+                foundH := 0
+                baseExe := RegExReplace(target, "^.*[\\/]", "")
+                loop 20 {
+                    Sleep 150
+                    for h in WinGetList() {
+                        if before.Has(h)
+                            continue
+                        try procName := WinGetProcessName("ahk_id " h)
+                        if (procName && InStr(StrLower(procName), StrLower(baseExe))) {
+                            foundH := h
+                            break
+                        }
+                    }
+                    if foundH
+                        break
+                }
+
+                if foundH {
+                    WinActivate("ahk_id " foundH)
+                    Sleep 100
+                    WinMaximize("ahk_id " foundH)
+                    newWindows.Push(foundH)
+                }
+            }
+        } catch as e {
+            MsgBox("Failed to launch: " target "`n`n" e.Message, "Launch Error", 0x10)
+        }
+    }
+
+    gModePIDs[idx] := { pids: newPids, windows: newWindows, profile: tmpProf }
+    gLastMode := idx
+}
+
+GetDefaultBrowserExe() {
+    static path := ""
+    if (path != "")
+        return path
+
+    try {
+        progId := RegRead(
+            "HKEY_CURRENT_USER\Software\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice", "ProgId"
+        )
+        cmd := RegRead("HKEY_CLASSES_ROOT\" progId "\shell\open\command")
+        RegExMatch(cmd, "" "([^" "]+)" "", &m)
+        if (m.Length && FileExist(m[1]) && !InStr(StrLower(m[1]), "msedge")) {
+            path := m[1]
+            return path
+        }
+    }
+
+    browsers := []
+    loop reg, "HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths", "K" {
+        try {
+            exe := RegRead("HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\" A_LoopRegName)
+            if (exe && FileExist(exe)) {
+                name := StrLower(A_LoopRegName)
+                if (InStr(name, "chrome") || InStr(name, "brave") || InStr(name, "firefox")
+                || InStr(name, "opera") || InStr(name, "vivaldi") || InStr(name, "chromium")
+                || InStr(name, "browser")) {
+                    browsers.Push(exe)
+                }
+            }
+        }
+    }
+
+    static fallbacks := ["brave.exe", "chrome.exe", "firefox.exe",
+        "opera.exe", "vivaldi.exe", "chromium.exe"]
+    for , name in fallbacks
+        if ((p := FindOnPath(name)) && FileExist(p))
+            browsers.Push(p)
+
+    for , p in browsers
+        if (FileExist(p)) {
+            path := p
+            return path
+        }
+
+    path := FileSelect(3, , "Select your browser executable (avoid Edge)", "Programs (*.exe)")
+    if (!path)
+        path := "chrome.exe"
+    return path
+}
+
+CloseAllWindows() {
+    excludeList := ["ModeDeck", "Task Manager", "Program Manager", "Windows Explorer"]
+
+    windows := WinGetList()
+    for hwnd in windows {
+        try {
+            title := WinGetTitle("ahk_id " hwnd)
+            exe := WinGetProcessName("ahk_id " hwnd)
+            if (!title || !exe)
+                continue
+
+            skip := false
+            for _, excl in excludeList {
+                if InStr(title, excl) || InStr(exe, excl) {
+                    skip := true
+                    break
+                }
+            }
+
+            if (!skip) {
+                WinClose("ahk_id " hwnd)
+            }
+        } catch {
+
+        }
+    }
 }
 
 LoadModes() {
