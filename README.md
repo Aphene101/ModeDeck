@@ -2,19 +2,18 @@
 
 **ModeDeck** is a lightweight, open-source Windows tool built with AutoHotkey v2. It lets you create and launch "modes" — sets of apps, files, and URLs that open together.
 
-Stop opening the same tabs, documents, and apps manually. Switch between **Work**, **Study**, or **Anime** modes instantly with one click or hotkey.
+Stop opening the same tabs, documents, and apps manually. Switch between **Work**, **Study**, or **Watch** modes instantly with one click.
 
-![ModeDeck Screenshot](assets/screenshot.png) <!-- Add screenshot later -->
+![ModeDeck Screenshot](assets/screenshots/ModeDeck.png)
 
 ---
 
 ## ✨ Features
 
 - **Create custom modes**: Add apps, files, and URLs to launch together.
-- **Quick launch**: Launch via the main window or hotkeys (Win+Alt+1..9).
+- **Quick launch**: Launch via the main window.
 - **Lightweight**: Minimal memory/CPU use, perfect for older laptops.
 - **Auto-start option**: Keep ModeDeck running in the tray on Windows startup.
-- **Import/Export modes**: Backup or share your setups easily.
 - **No login required**: Everything is saved locally per user account.
 
 ---
@@ -30,8 +29,8 @@ Stop opening the same tabs, documents, and apps manually. Switch between **Work*
 ## 🚀 Quick Start
 
 1. Launch ModeDeck (tray icon appears).
-2. Right-click tray → **New Mode (Wizard)** to create your first mode.
+2. Click + → **New Mode (Wizard)** to create your first mode.
 3. Add items (apps, files, URLs) using the wizard.
+   ![ModeDeck Screenshot](assets/screenshots/CreateNewMode.png)
 4. Launch a mode via:
-   - Main window → Select → Launch
-   - Hotkeys: **Win+Alt+1..9**
+   - Main window → Select Mode
