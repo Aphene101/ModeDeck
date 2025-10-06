@@ -4,3 +4,5 @@ dist/
 Thumbs.db
 .DS_Store
 /src/profiles/
+/states.json
+/src/profiles.json
