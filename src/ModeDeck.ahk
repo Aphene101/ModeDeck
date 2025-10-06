@@ -102,11 +102,20 @@ AddCreateRow(gui, y, W) {
 
 ShowCreateModePrompt(*) {
     global gCreateDlg
-    if (gCreateDlg != "" && WinExist("ahk_id " gCreateDlg.Hwnd)) {
+    if IsObject(gCreateDlg) && GuiIsAlive(gCreateDlg) {
         gCreateDlg.Show("Center")
         WinActivate("ahk_id " gCreateDlg.Hwnd)
         return
     }
+
+    GuiIsAlive(gui) {
+        try {
+            return gui.Hwnd
+        } catch {
+            return false
+        }
+    }
+
     gCreateDlg := CreateModePrompt()
 }
 
