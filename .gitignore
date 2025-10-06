@@ -3,3 +3,4 @@ dist/
 *.bak
 Thumbs.db
 .DS_Store
+/src/profiles/

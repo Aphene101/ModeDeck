@@ -683,6 +683,15 @@ CanOpenItem(item) {
     }
 }
 
+ArrayContains(arr, value) {
+    if !IsObject(arr)
+        return false
+    for _, v in arr
+        if (v = value)
+            return true
+    return false
+}
+
 ValidateMode(mode) {
     errs := []
     if !mode || !mode.HasProp("items") || Type(mode.items) != "Array" || mode.items.Length = 0
@@ -716,7 +725,7 @@ ValidateMode(mode) {
 }
 
 LaunchMode(idx) {
-    global gModes, gModePIDs, gLastMode, profileStateFile, gProfileInitialized
+    global gModes, gModePIDs, gLastMode
 
     mode := gModes[idx]
     if !mode || !mode.HasProp("items") {
@@ -731,15 +740,18 @@ LaunchMode(idx) {
     }
 
     ; --- Kill previous mode safely ---
-    if (gLastMode && gModePIDs.Has(gLastMode)) {
+    if (gModePIDs.Has(idx) OR gLastMode && gLastMode != idx && gModePIDs.Has(gLastMode)) {
+
         for proc in gModePIDs[gLastMode].pids {
             pid := proc.pid
             try RunWait('taskkill /PID ' pid ' /T /F', , 'Hide')
         }
 
         for hwnd in gModePIDs[gLastMode].windows {
-            try if WinExist("ahk_id " hwnd)
-                WinClose("ahk_id " hwnd)
+            try {
+                if WinExist("ahk_id " hwnd)
+                    WinClose("ahk_id " hwnd)
+            }
         }
 
         gModePIDs.Delete(gLastMode)
@@ -761,44 +773,38 @@ LaunchMode(idx) {
     }
 
     tmpProf := ""
-    ; --- Launch URLs and PDFs ---
     if (urlsAndPdfs.Length > 0) {
         exe := GetDefaultBrowserExe()
         profName := RegExReplace(mode.name, "[^\w\s-]", "_")
         tmpProf := A_ScriptDir "\profiles\" profName
         DirCreate(tmpProf)
 
-        ; Mark profile as initialized once
-        if !gProfileInitialized.Has(profName) {
-            gProfileInitialized[profName] := true
-            if FileExist(profileStateFile)
-                FileDelete(profileStateFile)
-            FileAppend(JSON.Dump(gProfileInitialized), profileStateFile, "UTF-8")
+        if !gProfileInitialized.Has(profName) || !IsObject(gProfileInitialized[profName]) {
+            gProfileInitialized[profName] := []
         }
 
-        ; Check if profile already has a running window
-        existingPid := ""
-        for _, proc in gModePIDs {
-            if proc.HasKey("profile") && proc.profile = tmpProf {
-                if proc.pids.Length() > 0
-                    existingPid := proc.pids[1].pid
-                break
-            }
+        urlsToLaunch := []
+        for _, u in urlsAndPdfs {
+            if !ArrayContains(gProfileInitialized[profName], u.target)
+                urlsToLaunch.Push(u.target)
         }
 
-        ; Build command
+        if (urlsToLaunch.Length = 0)
+            urlsToLaunch := []
+
         cmd := '"' exe '" --user-data-dir="' tmpProf '" --no-first-run --no-default-browser-check --disable-session-crashed-bubble --restore-last-session=false --allow-pre-commit-input --enable-features=PasswordImport'
-        for _, u in urlsAndPdfs
-            cmd .= ' "' u.target '"'
 
-        if existingPid {
-            ; If profile is already running, just run the URLs (will open in existing window)
-            Run cmd, , , &pid
-        } else {
-            ; Start new window
-            cmd .= " --new-window"
-            Run cmd, , , &pid
-        }
+        for _, u in urlsToLaunch
+            cmd .= ' "' u '"'
+
+        Run cmd, , , &pid
+
+        ; --- mark URLs as launched in profile ---
+        for _, u in urlsToLaunch
+            gProfileInitialized[profName].Push(u)
+
+        try FileDelete(profileStateFile)
+        FileAppend(JSON.Dump(gProfileInitialized), profileStateFile, "UTF-8")
 
         newPids.Push({ pid: pid, exe: exe })
 
@@ -811,7 +817,6 @@ LaunchMode(idx) {
         }
     }
 
-    ; Launch other items (files/apps)
     for _, it in otherItems {
         target := it.target
         t := it.type
