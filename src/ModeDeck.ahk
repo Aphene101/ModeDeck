@@ -32,7 +32,6 @@ Main() {
 
     maingui := Gui()
     maingui.Title := "ModeDeck"
-    TraySetIcon(A_ScriptDir "\..\assets\ModeDeck.ico")
 
     maingui.BackColor := "0x262626"
     maingui.SetFont("cc0c0c0 s40", "Segoe UI")
@@ -411,31 +410,6 @@ DeleteMode(idx) {
 
 IsProbablyUrl(url) {
     return RegExMatch(url, "i)^(https?://)[^\s/$.?#].[^\s]*$")
-}
-
-HttpReachable(url, timeoutMs := 2500) {
-    try {
-        req := ComObject("WinHttp.WinHttpRequest.5.1")
-        req.Option[4] := 0x00002000   ; <<< NEW: suppress cert / error dialogs
-        req.SetTimeouts(timeoutMs, timeoutMs, timeoutMs, timeoutMs)
-        req.Open("HEAD", url, false)
-        req.SetRequestHeader("User-Agent", "ModeDeck/1.0 (AHK v2)")
-        try {
-            req.Send()
-        } catch {
-            req := ComObject("WinHttp.WinHttpRequest.5.1")
-            req.Option[4] := 0x00002000   ; <<< same flag for fallback request
-            req.SetTimeouts(timeoutMs, timeoutMs, timeoutMs, timeoutMs)
-            req.Open("GET", url, false)
-            req.SetRequestHeader("Range", "bytes=0-0")
-            req.SetRequestHeader("User-Agent", "ModeDeck/1.0 (AHK v2)")
-            req.Send()
-        }
-        status := req.Status
-        return Map("ok", (status >= 200 && status < 400), "status", status, "reason", req.StatusText)
-    } catch as e {
-        return Map("ok", false, "status", 0, "reason", e.Message)
-    }
 }
 
 FileOrDirExists(p) {
@@ -918,33 +892,33 @@ GetDefaultBrowserExe() {
     return path
 }
 
-CloseAllWindows() {
-    excludeList := ["ModeDeck", "Task Manager", "Program Manager", "Windows Explorer"]
+; CloseAllWindows() {
+;     excludeList := ["ModeDeck", "Task Manager", "Program Manager", "Windows Explorer"]
 
-    windows := WinGetList()
-    for hwnd in windows {
-        try {
-            title := WinGetTitle("ahk_id " hwnd)
-            exe := WinGetProcessName("ahk_id " hwnd)
-            if (!title || !exe)
-                continue
+;     windows := WinGetList()
+;     for hwnd in windows {
+;         try {
+;             title := WinGetTitle("ahk_id " hwnd)
+;             exe := WinGetProcessName("ahk_id " hwnd)
+;             if (!title || !exe)
+;                 continue
 
-            skip := false
-            for _, excl in excludeList {
-                if InStr(title, excl) || InStr(exe, excl) {
-                    skip := true
-                    break
-                }
-            }
+;             skip := false
+;             for _, excl in excludeList {
+;                 if InStr(title, excl) || InStr(exe, excl) {
+;                     skip := true
+;                     break
+;                 }
+;             }
 
-            if (!skip) {
-                WinClose("ahk_id " hwnd)
-            }
-        } catch {
+;             if (!skip) {
+;                 WinClose("ahk_id " hwnd)
+;             }
+;         } catch {
 
-        }
-    }
-}
+;         }
+;     }
+; }
 
 LoadModes() {
     global gModes, configPath
