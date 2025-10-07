@@ -684,27 +684,51 @@ ValidateMode(mode) {
 
     if mode && mode.HasProp("items") {
         for i, it in mode.items {
-            res := CanOpenItem(it)
-            if !res["ok"] {
-                label := ""
-                if IsObject(it) {
-                    try {
-                        for k, v in it {
-                            if (StrLower(k) ~= "^(target|value|path|url|name)$") {
-                                label := v
-                                break
-                            }
+            label := ""
+            path := ""
+            typeHint := ""
+
+            if IsObject(it) {
+                try {
+                    for k, v in it {
+                        lk := StrLower(k)
+                        if (lk = "target" || lk = "path" || lk = "value" || lk = "url" || lk = "name") {
+                            label := v
+                            path := v
+                            if (lk = "type")
+                                typeHint := StrLower(v)
                         }
                     }
-                } else {
-                    label := it . ""
                 }
+            } else {
+                label := it . ""
+                path := label
+            }
 
+            if (typeHint = "") {
+                if RegExMatch(path, "i)^https?://")
+                    typeHint := "url"
+                else if RegExMatch(path, "i)\.(lnk|url)$")
+                    typeHint := "file"
+                else if RegExMatch(path, "i)\.(exe|com|bat|cmd)$")
+                    typeHint := "app"
+            }
+
+            if (typeHint = "url" && IsProbablyUrl(path))
+                continue
+            if (typeHint = "file" && FileOrDirExists(path))
+                continue
+            if (typeHint = "app" && FileExist(path) && RegExMatch(StrLower(path), "\.(exe|com|bat|cmd)$"))
+                continue
+
+            res := CanOpenItem(it)
+            if !res["ok"] {
                 if !label
                     label := "(item #" i ")"
                 errs.Push(Map("index", i, "item", label, "message", res["err"]))
             }
         }
+
     }
     return errs.Length ? Map("ok", false, "errors", errs) : Map("ok", true, "errors", [])
 }
