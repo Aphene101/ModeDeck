@@ -4,14 +4,16 @@
 
 global W := 1000
 global H := 600
-global configPath := A_ScriptDir "\..\states.json"
+configDir := A_AppData "\ModeDeck"
+DirCreate configDir
+global configPath := configDir "\states.json"
 global gModes := []
 global maingui
 global gCreateDlg := ""
 global gEditDlgs := Map()
 global gModePIDs := Map()
 global gLastMode := 0
-global profileStateFile := A_ScriptDir "\profiles.json"
+global profileStateFile := A_AppData "\ModeDeck\profiles.json"
 global gProfileInitialized := Map()
 
 if FileExist(profileStateFile) {
@@ -759,8 +761,8 @@ LaunchMode(idx) {
     if (urlsAndPdfs.Length > 0) {
         exe := GetDefaultBrowserExe()
         profName := RegExReplace(mode.name, "[^\w\s-]", "_")
-        tmpProf := A_ScriptDir "\profiles\" profName
-        DirCreate(tmpProf)
+        tmpProf := A_AppData "\ModeDeck\profiles\" profName
+        DirCreate tmpProf
 
         if !gProfileInitialized.Has(profName) || !IsObject(gProfileInitialized[profName]) {
             gProfileInitialized[profName] := []
