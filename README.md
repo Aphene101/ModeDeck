@@ -4,6 +4,8 @@
 
 Stop opening the same tabs, documents, and apps manually. Switch between **Work**, **Study**, or **Watch** modes instantly with one click.
 
+_(Please Note that when opening a Mode for the first time you will need to login and sign-up again in the case of website BUT DON'T WORRY you will only need to do this the first time!)_
+
 ![ModeDeck Screenshot](assets/screenshots/ModeDeck.png)
 
 ---
