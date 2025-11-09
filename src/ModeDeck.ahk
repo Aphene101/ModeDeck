@@ -34,23 +34,49 @@ Main() {
 
     maingui := Gui()
     maingui.Title := "ModeDeck"
-
     maingui.BackColor := "0x262626"
+
     maingui.SetFont("cc0c0c0 s40", "Segoe UI")
     title := maingui.Add("Text", "x0 y16 w" W " Center", "Modes")
 
     maingui.SetFont("s18 cc0c0c0", "Segoe UI")
-
     title.GetPos(, &tY, , &tH)
     y := tY + tH + 16
 
-    ; ToolTip("Loaded modes: " gModes.Length)
-    SetTimer(() => ToolTip(), -1500)
+    btnW := 180
+    btnH := 40
+    footerMargin := 18
+    footerHeight := btnH + footerMargin * 2
 
-    for idx, mode in gModes
+    createRowHeight := 61
+    maxContentY := H - footerHeight - 8
+
+    shown := 0
+    total := gModes.Length
+
+    for idx, mode in gModes {
+        if (y + 60 > maxContentY - createRowHeight) {
+            remaining := total - shown
+            if (remaining > 0) {
+                maingui.AddText("x20 y" y " w" (W - 40) " h28 BackgroundTrans", "… " remaining " more mode(s) not shown (window too small)"
+                )
+                y += 30
+            }
+            break
+        }
         y := AddModeRow(maingui, mode, y, W, idx)
+        shown++
+    }
 
-    y := AddCreateRow(maingui, y, W)
+    if (y + createRowHeight <= maxContentY) {
+        y := AddCreateRow(maingui, y, W)
+    }
+
+    btnX := (W - btnW) // 2
+    btnY := H - footerMargin - btnH
+    maingui.SetFont("s15 c0xC0C0C0", "Segoe UI")
+    btnCloseModes := maingui.Add("Button", "x" btnX " y" btnY " w" btnW " h" btnH, "Close Modes")
+    btnCloseModes.OnEvent("Click", (*) => CloseModes())
 
     maingui.Show("w" W " h" H)
 }
@@ -868,6 +894,80 @@ LaunchMode(idx) {
     gLastMode := idx
 }
 
+CloseModes() {
+    global gModePIDs, gLastMode
+
+    if (!IsObject(gModePIDs) || gModePIDs.Count = 0) {
+        ShowTemporaryToolTip("No modes running.", 1400)
+        return
+    }
+
+    for idx, entry in gModePIDs {
+        if IsObject(entry) {
+            if (IsObject(entry.pids)) {
+                for _, proc in entry.pids {
+                    try {
+                        pid := proc.pid
+                        if (pid) {
+                            RunWait('taskkill /PID ' pid ' /T /F', , 'Hide')
+                        }
+                    } catch {
+
+                    }
+                }
+            }
+
+            if (IsObject(entry.windows)) {
+                for _, hwnd in entry.windows {
+                    try {
+                        if (hwnd && WinExist("ahk_id " hwnd))
+                            WinClose("ahk_id " hwnd)
+                    } catch {
+
+                    }
+                }
+            }
+
+            try {
+                haveProfile := false
+                try haveProfile := (IsObject(entry) && (entry.Has("profile") || entry.HasProp("profile")))
+                catch
+                    if (haveProfile && entry.profile) {
+                        RunWait('rmdir /S /Q "' entry.profile '"', , 'Hide')
+                    }
+            } catch {
+
+            }
+        }
+    }
+
+    gModePIDs := Map()
+    gLastMode := 0
+
+    ShowTemporaryToolTip("Closed all modes.", 1400)
+}
+
+ShowTemporaryToolTip(msg, duration_ms := 1400) {
+    if (msg = "")
+        return
+
+    textWidthPx := StrLen(msg) * 7
+    x := (A_ScreenWidth - textWidthPx) // 4 + 110
+    y := A_ScreenHeight - 450
+
+    ToolTip(msg, x, y)
+
+    static clearTimer := () => _ClearTemporaryToolTip()
+
+    try SetTimer(clearTimer, "Off")
+    catch
+        SetTimer(clearTimer, -duration_ms)
+}
+
+_ClearTemporaryToolTip() {
+    ToolTip()
+}
+
 GetDefaultBrowserExe() {
     static path := ""
     if (path != "")
@@ -917,34 +1017,6 @@ GetDefaultBrowserExe() {
         path := "chrome.exe"
     return path
 }
-
-; CloseAllWindows() {
-;     excludeList := ["ModeDeck", "Task Manager", "Program Manager", "Windows Explorer"]
-
-;     windows := WinGetList()
-;     for hwnd in windows {
-;         try {
-;             title := WinGetTitle("ahk_id " hwnd)
-;             exe := WinGetProcessName("ahk_id " hwnd)
-;             if (!title || !exe)
-;                 continue
-
-;             skip := false
-;             for _, excl in excludeList {
-;                 if InStr(title, excl) || InStr(exe, excl) {
-;                     skip := true
-;                     break
-;                 }
-;             }
-
-;             if (!skip) {
-;                 WinClose("ahk_id " hwnd)
-;             }
-;         } catch {
-
-;         }
-;     }
-; }
 
 LoadModes() {
     global gModes, configPath
@@ -1002,7 +1074,6 @@ LoadModes() {
     } catch {
         gModes := []
     }
-    ToolTip("afterLoad gModes=" gModes.Length), SetTimer(() => ToolTip(), -1500)
 }
 
 DeepClone(v) {
@@ -1019,17 +1090,47 @@ RefreshModes() {
     maingui := Gui()
     maingui.Title := "ModeDeck"
     maingui.BackColor := "0x262626"
+
     maingui.SetFont("c0xC0C0C0 s40", "Segoe UI")
     title := maingui.Add("Text", "x0 y16 w" W " Center", "Modes")
-    maingui.SetFont("s18 c0xC0C0C0", "Segoe UI")
 
+    maingui.SetFont("s18 c0xC0C0C0", "Segoe UI")
     title.GetPos(, &tY, , &tH)
     y := tY + tH + 16
 
-    for idx, mode in gModes
-        y := AddModeRow(maingui, mode, y, W, idx)
+    btnW := 180
+    btnH := 40
+    footerMargin := 18
+    footerHeight := btnH + footerMargin * 2
+    createRowHeight := 61
+    maxContentY := H - footerHeight - 8
 
-    y := AddCreateRow(maingui, y, W)
+    shown := 0
+    total := gModes.Length
+
+    for idx, mode in gModes {
+        if (y + 60 > maxContentY - createRowHeight) {
+            remaining := total - shown
+            if (remaining > 0) {
+                maingui.AddText("x20 y" y " w" (W - 40) " h28 BackgroundTrans", "… " remaining " more mode(s) not shown (window too small)"
+                )
+                y += 30
+            }
+            break
+        }
+        y := AddModeRow(maingui, mode, y, W, idx)
+        shown++
+    }
+
+    if (y + createRowHeight <= maxContentY) {
+        y := AddCreateRow(maingui, y, W)
+    }
+
+    btnX := (W - btnW) // 2
+    btnY := H - footerMargin - btnH
+    maingui.SetFont("s15 c0xC0C0C0", "Segoe UI")
+    btnCloseModes := maingui.Add("Button", "x" btnX " y" btnY " w" btnW " h" btnH, "Close Modes")
+    btnCloseModes.OnEvent("Click", (*) => CloseModes())
 
     maingui.Show("w" W " h" H)
 }
